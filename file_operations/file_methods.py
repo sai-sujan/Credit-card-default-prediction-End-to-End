@@ -1,98 +1,242 @@
-import pickle
+"""
+Model file operations with joblib serialization and proper error handling.
+
+This module handles all model persistence operations including:
+- Saving trained models
+- Loading models for prediction
+- Finding models by cluster number
+- Model versioning support
+"""
+import joblib
 import os
 import shutil
+from pathlib import Path
+from typing import Any, Optional
+import logging
+
+from config import settings
+from utils.exceptions import FileOperationError, ModelPredictionError
 
 
 class File_Operation:
     """
-                This class shall be used to save the model after training
-                and load the saved model for prediction.
+    Handles model file operations with industry-standard practices.
 
+    Features:
+    - joblib serialization (faster and safer than pickle for ML models)
+    - Proper error handling with custom exceptions
+    - Type hints for better code clarity
+    - Context managers for safe file operations
+    - Logging for all operations
+    """
 
-                """
-    def __init__(self,file_object,logger_object):
-        self.file_object = file_object
-        self.logger_object = logger_object
-        self.model_directory='models/'
-
-    def save_model(self,model,filename):
+    def __init__(self, file_object=None, logger_object=None):
         """
-            Method Name: save_model
-            Description: Save the model file to directory
-            Outcome: File gets saved
-            On Failure: Raise Exception
+        Initialize file operations handler.
 
-"""
-        self.logger_object.log(self.file_object, 'Entered the save_model method of the File_Operation class')
+        Args:
+            file_object: Legacy parameter, kept for backward compatibility
+            logger_object: Legacy parameter, kept for backward compatibility
+        """
+        self.logger = logging.getLogger(__name__)
+        self.model_directory = settings.MODELS_PATH
+
+        # Ensure model directory exists
+        self.model_directory.mkdir(parents=True, exist_ok=True)
+
+    def save_model(self, model: Any, filename: str) -> str:
+        """
+        Save a machine learning model to disk using joblib.
+
+        Args:
+            model: The trained model object to save
+            filename: Name for the model file (without extension)
+
+        Returns:
+            'success' if save operation completed successfully
+
+        Raises:
+            FileOperationError: If model save fails
+        """
+        self.logger.info(f"Saving model: {filename}")
+
         try:
-            path = os.path.join(self.model_directory,filename) #create seperate directory for each cluster
-            if os.path.isdir(path): #remove previously existing models for each clusters
-                shutil.rmtree(self.model_directory)
-                os.makedirs(path)
-            else:
-                os.makedirs(path) #
-            with open(path +'/' + filename+'.sav',
-                      'wb') as f:
-                pickle.dump(model, f) # save the model to file
-            self.logger_object.log(self.file_object,
-                                   'Model File '+filename+' saved. Exited the save_model method of the Model_Finder class')
+            model_path = self.model_directory / filename
 
+            # Create directory for this model
+            if model_path.is_dir():
+                self.logger.warning(f"Removing existing model directory: {filename}")
+                shutil.rmtree(model_path)
+
+            model_path.mkdir(parents=True, exist_ok=True)
+
+            # Save model with joblib (more efficient than pickle for large numpy arrays)
+            model_file = model_path / f"{filename}.joblib"
+            joblib.dump(model, model_file, compress=3)
+
+            self.logger.info(f"Model '{filename}' saved successfully at {model_file}")
             return 'success'
-        except Exception as e:
-            self.logger_object.log(self.file_object,'Exception occured in save_model method of the Model_Finder class. Exception message:  ' + str(e))
-            self.logger_object.log(self.file_object,
-                                   'Model File '+filename+' could not be saved. Exited the save_model method of the Model_Finder class')
-            raise Exception()
 
-    def load_model(self,filename):
-        """
-                    Method Name: load_model
-                    Description: load the model file to memory
-                    Output: The Model file loaded in memory
-                    On Failure: Raise Exception
-        """
-        self.logger_object.log(self.file_object, 'Entered the load_model method of the File_Operation class')
-        try:
-            with open(self.model_directory + filename + '/' + filename + '.sav',
-                      'rb') as f:
-                self.logger_object.log(self.file_object,
-                                       'Model File ' + filename + ' loaded. Exited the load_model method of the Model_Finder class')
-                return pickle.load(f)
         except Exception as e:
-            self.logger_object.log(self.file_object,
-                                   'Exception occured in load_model method of the Model_Finder class. Exception message:  ' + str(
-                                       e))
-            self.logger_object.log(self.file_object,
-                                   'Model File ' + filename + ' could not be saved. Exited the load_model method of the Model_Finder class')
-            raise Exception()
+            error_msg = f"Failed to save model '{filename}'"
+            self.logger.error(error_msg, exc_info=True)
+            raise FileOperationError(
+                error_msg,
+                details={'filename': filename, 'error': str(e)}
+            ) from e
 
-    def find_correct_model_file(self,cluster_number):
+    def load_model(self, filename: str) -> Any:
         """
-                            Method Name: find_correct_model_file
-                            Description: Select the correct model based on cluster number
-                            Output: The Model file
-                            On Failure: Raise Exception
-                """
-        self.logger_object.log(self.file_object, 'Entered the find_correct_model_file method of the File_Operation class')
+        Load a machine learning model from disk.
+
+        Args:
+            filename: Name of the model file (without extension)
+
+        Returns:
+            The loaded model object
+
+        Raises:
+            ModelPredictionError: If model file doesn't exist
+            FileOperationError: If model load fails
+        """
+        self.logger.info(f"Loading model: {filename}")
+
         try:
-            self.cluster_number= cluster_number
-            self.folder_name=self.model_directory
-            self.list_of_model_files = []
-            self.list_of_files = os.listdir(self.folder_name)
-            for self.file in self.list_of_files:
-                try:
-                    if (self.file.index(str( self.cluster_number))!=-1):
-                        self.model_name=self.file
-                except:
-                    continue
-            self.model_name=self.model_name.split('.')[0]
-            self.logger_object.log(self.file_object,
-                                   'Exited the find_correct_model_file method of the Model_Finder class.')
-            return self.model_name
+            model_file = self.model_directory / filename / f"{filename}.joblib"
+
+            if not model_file.exists():
+                # Try legacy pickle format for backward compatibility
+                legacy_file = self.model_directory / filename / f"{filename}.sav"
+                if legacy_file.exists():
+                    self.logger.warning(f"Loading legacy pickle file: {legacy_file}")
+                    import pickle
+                    with open(legacy_file, 'rb') as f:
+                        model = pickle.load(f)
+                    # Re-save in joblib format
+                    self.save_model(model, filename)
+                    return model
+                else:
+                    raise ModelPredictionError(
+                        f"Model file not found: {filename}",
+                        details={'expected_path': str(model_file)}
+                    )
+
+            model = joblib.load(model_file)
+            self.logger.info(f"Model '{filename}' loaded successfully")
+            return model
+
+        except ModelPredictionError:
+            raise
         except Exception as e:
-            self.logger_object.log(self.file_object,
-                                   'Exception occured in find_correct_model_file method of the Model_Finder class. Exception message:  ' + str(
-                                       e))
-            self.logger_object.log(self.file_object,
-                                   'Exited the find_correct_model_file method of the Model_Finder class with Failure')
-            raise Exception()
+            error_msg = f"Failed to load model '{filename}'"
+            self.logger.error(error_msg, exc_info=True)
+            raise FileOperationError(
+                error_msg,
+                details={'filename': filename, 'error': str(e)}
+            ) from e
+
+    def find_correct_model_file(self, cluster_number: int) -> str:
+        """
+        Find the model file corresponding to a cluster number.
+
+        Args:
+            cluster_number: The cluster number to find the model for
+
+        Returns:
+            The model filename (without extension)
+
+        Raises:
+            ModelPredictionError: If no model found for the cluster
+        """
+        self.logger.info(f"Finding model for cluster: {cluster_number}")
+
+        try:
+            cluster_str = str(cluster_number)
+            list_of_files = os.listdir(self.model_directory)
+
+            model_name = None
+            for file in list_of_files:
+                if cluster_str in file:
+                    model_name = file
+                    break
+
+            if model_name is None:
+                raise ModelPredictionError(
+                    f"No model found for cluster {cluster_number}",
+                    details={
+                        'cluster': cluster_number,
+                        'available_models': list_of_files
+                    }
+                )
+
+            # Remove file extension if present
+            model_name = model_name.split('.')[0]
+
+            self.logger.info(f"Found model '{model_name}' for cluster {cluster_number}")
+            return model_name
+
+        except ModelPredictionError:
+            raise
+        except Exception as e:
+            error_msg = f"Error finding model for cluster {cluster_number}"
+            self.logger.error(error_msg, exc_info=True)
+            raise FileOperationError(
+                error_msg,
+                details={'cluster': cluster_number, 'error': str(e)}
+            ) from e
+
+    def delete_model(self, filename: str) -> bool:
+        """
+        Delete a model file and its directory.
+
+        Args:
+            filename: Name of the model to delete
+
+        Returns:
+            True if deletion was successful
+
+        Raises:
+            FileOperationError: If deletion fails
+        """
+        self.logger.info(f"Deleting model: {filename}")
+
+        try:
+            model_path = self.model_directory / filename
+
+            if model_path.exists():
+                shutil.rmtree(model_path)
+                self.logger.info(f"Model '{filename}' deleted successfully")
+                return True
+            else:
+                self.logger.warning(f"Model '{filename}' does not exist")
+                return False
+
+        except Exception as e:
+            error_msg = f"Failed to delete model '{filename}'"
+            self.logger.error(error_msg, exc_info=True)
+            raise FileOperationError(
+                error_msg,
+                details={'filename': filename, 'error': str(e)}
+            ) from e
+
+    def list_models(self) -> list:
+        """
+        List all available models.
+
+        Returns:
+            List of model names
+        """
+        try:
+            if not self.model_directory.exists():
+                return []
+
+            models = [f.name for f in self.model_directory.iterdir() if f.is_dir()]
+            self.logger.info(f"Found {len(models)} models")
+            return models
+
+        except Exception as e:
+            self.logger.error("Failed to list models", exc_info=True)
+            raise FileOperationError(
+                "Failed to list models",
+                details={'error': str(e)}
+            ) from e

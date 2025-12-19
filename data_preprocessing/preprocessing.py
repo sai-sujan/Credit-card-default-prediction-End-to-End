@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from imblearn.over_sampling import RandomOverSampler
 class Preprocessor:
     """
         This class shall  be used to clean and transform the data before training.
@@ -124,9 +126,9 @@ class Preprocessor:
         self.data= data
         self.cols_with_missing_values=cols_with_missing_values
         try:
-            self.imputer = CategoricalImputer()
+            self.imputer = SimpleImputer(strategy='most_frequent')
             for col in self.cols_with_missing_values:
-                self.data[col] = self.imputer.fit_transform(self.data[col])
+                self.data[col] = self.imputer.fit_transform(self.data[[col]]).ravel()
             self.logger_object.log(self.file_object, 'Imputing missing values Successful. Exited the impute_missing_values method of the Preprocessor class')
             return self.data
         except Exception as e:
@@ -198,8 +200,8 @@ class Preprocessor:
                                'Entered the handle_imbalanced_dataset method of the Preprocessor class')
 
         try:
-            self.rdsmple = RandomOverSampler()
-            self.x_sampled,self.y_sampled  = self.rdsmple.fit_sample(x,y)
+            self.rdsmple = RandomOverSampler(random_state=42)
+            self.x_sampled,self.y_sampled  = self.rdsmple.fit_resample(x,y)
             self.logger_object.log(self.file_object,
                                    'dataset balancing successful. Exited the handle_imbalanced_dataset method of the Preprocessor class')
             return self.x_sampled,self.y_sampled

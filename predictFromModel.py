@@ -51,8 +51,9 @@ class prediction:
                 model_name = file_loader.find_correct_model_file(i)
                 model = file_loader.load_model(model_name)
                 result=(model.predict(cluster_data))
+                predictions.extend(result)
 
-            final= pd.DataFrame(list(zip(result)),columns=['Predictions'])
+            final= pd.DataFrame(list(zip(predictions)),columns=['Predictions'])
             path="Prediction_Output_File/Predictions.csv"
             final.to_csv("Prediction_Output_File/Predictions.csv",header=True,mode='a+') #appends result to prediction file
             self.log_writer.log(self.file_object,'End of Prediction')
